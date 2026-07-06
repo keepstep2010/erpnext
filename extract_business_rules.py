@@ -87,6 +87,8 @@ RELEVANT_METHOD_PREFIXES = (
     "set_",
 )
 
+DEFAULT_NAMING = "自动递增 ID"
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = SCRIPT_DIR if os.path.exists(os.path.join(SCRIPT_DIR, "erpnext")) else os.getcwd()
 DOCTYPE_ROOT = os.path.join(REPO_ROOT, "erpnext")
@@ -150,9 +152,11 @@ class RuleExtractor:
             for kw in node.keywords:
                 strings.extend(self._get_string_values(kw.value))
             if strings:
-                return self._normalize_text(" | ".join(s for s in strings if s and s.strip()))
+                message = self._normalize_text(" | ".join(s for s in strings if s and s.strip()))
+                return message
             if node.args:
-                return self._normalize_text(self._expr_text(node.args[0]))
+                message = self._normalize_text(self._expr_text(node.args[0]))
+                return message if message else ""
         elif isinstance(node, ast.Raise):
             if node.exc:
                 return self._format_message(node.exc) if isinstance(node.exc, ast.Call) else self._normalize_text(
@@ -371,7 +375,7 @@ class RuleExtractor:
         return {
             "name": data.get("name") or self.doctype,
             "module": data.get("module") or "Unknown",
-            "naming": data.get("autoname") or "自动递增 ID",
+            "naming": data.get("autoname") or DEFAULT_NAMING,
             "document_type": data.get("document_type") or data.get("doctype") or "Document",
             "is_submittable": truthy(data.get("is_submittable")),
             "field_count": len(fields),
@@ -446,9 +450,14 @@ class RuleExtractor:
 
         js_messages = []
         for kind, msg in js_throws_tr:
-            js_messages.append(f"{kind.capitalize()}: {msg}")
+            clean_msg = self._normalize_text(msg)
+            if clean_msg:
+                js_messages.append(f"{kind.capitalize()}: {clean_msg}")
         for kind, msg in js_throws_raw:
-            msg_str = f"{kind.capitalize()}: {msg}"
+            clean_msg = self._normalize_text(msg)
+            if not clean_msg:
+                continue
+            msg_str = f"{kind.capitalize()}: {clean_msg}"
             if msg_str not in js_messages:
                 js_messages.append(msg_str)
 
@@ -560,7 +569,7 @@ class RuleExtractor:
             if validate_info:
                 report.append("#### `validate` 生命钩子执行校验流:")
                 if validate_info.get("self_calls"):
-                    report.append("在该钩子中按源码顺序调用了以下内部校验/处理函数:")
+                    report.append("在该钩子中按源码顺序列出了以下内部校验/处理函数（实际执行可能受条件分支影响）:")
                     for call in validate_info["self_calls"]:
                         report.append(f"1.  `self.{call}()`")
                 else:
