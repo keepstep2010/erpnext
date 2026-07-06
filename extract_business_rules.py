@@ -124,8 +124,6 @@ class RuleExtractor:
     def _get_string_values(self, node):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return [node.value]
-        if isinstance(node, ast.Str):
-            return [node.s]
         if isinstance(node, ast.Call):
             strings = []
             for arg in node.args:
@@ -262,7 +260,10 @@ class RuleExtractor:
         }
 
     def _extract_docstring(self, node):
-        doc = ast.get_docstring(node) or ""
+        if isinstance(node, dict):
+            doc = node.get("docstring", "")
+        else:
+            doc = ast.get_docstring(node) or ""
         if not doc:
             return ""
         first_line = doc.strip().splitlines()[0].strip()
@@ -415,6 +416,43 @@ class RuleExtractor:
                 module_functions[node.name] = self._method_info(node)
 
         return {"classes": classes, "module_functions": module_functions}
+
+    def extract_js_rules(self):
+        if not os.path.exists(self.js_path):
+            return {"form_bindings": [], "js_messages": []}
+
+        with open(self.js_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        rules = []
+        form_on_matches = re.findall(
+            r"frappe\.ui\.form\.on\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*({[\s\S]+?})\s*\)",
+            content,
+        )
+        for doc_name, body in form_on_matches:
+            triggers = re.findall(r"([a-zA-Z0-9_]+)\s*:\s*function\s*\([^\)]*\)\s*\{", body)
+            triggers_modern = re.findall(r"([a-zA-Z0-9_]+)\s*\([^\)]*\)\s*\{", body)
+            all_triggers = sorted(set(triggers + triggers_modern))
+            field_triggers = [t for t in all_triggers if t not in COMMON_LIFECYCLE_HOOKS and t not in JS_KEYWORDS]
+            doc_hooks = [t for t in all_triggers if t in COMMON_LIFECYCLE_HOOKS]
+            rules.append({
+                "target": doc_name,
+                "hooks": doc_hooks,
+                "field_triggers": field_triggers,
+            })
+
+        js_throws_tr = re.findall(r"frappe\.(throw|msgprint)\s*\(\s*__\s*\(\s*['\"]([^'\"]+)['\"]", content)
+        js_throws_raw = re.findall(r"frappe\.(throw|msgprint)\s*\(\s*['\"]([^'\"]+)['\"]", content)
+
+        js_messages = []
+        for kind, msg in js_throws_tr:
+            js_messages.append(f"{kind.capitalize()}: {msg}")
+        for kind, msg in js_throws_raw:
+            msg_str = f"{kind.capitalize()}: {msg}"
+            if msg_str not in js_messages:
+                js_messages.append(msg_str)
+
+        return {"form_bindings": rules, "js_messages": js_messages}
 
     def _format_control_messages(self, messages, indent="    "):
         lines = []
@@ -621,7 +659,7 @@ def discover_doctypes():
                 data = json.load(f)
         except Exception:
             continue
-        if data.get("doctype") != "DocType":
+        if not isinstance(data, dict) or data.get("doctype") != "DocType":
             continue
         doctypes.append({
             "doctype": data.get("name") or os.path.splitext(os.path.basename(json_path))[0].replace("_", " ").title(),
